@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -98,6 +99,33 @@ func CreateUsage(usage *Usage, opts CreateUsageOptions) {
 	return
 }
 
+func CompactUsage(usage *Usage, top int) {
+	sort.SliceStable(usage.Entries, func(i, j int) bool {
+		return usage.Entries[i].Size > usage.Entries[j].Size
+	})
+
+	if len(usage.Entries) > top {
+		newEntries := make([]*Usage, top+1)
+		copy(newEntries, usage.Entries[:top])
+
+		var othersSize int64
+		for _, entry := range usage.Entries[top:] {
+			othersSize += entry.Size
+		}
+
+		newEntries[top] = &Usage{
+			Name: "[Others]",
+			Size: othersSize,
+		}
+
+		usage.Entries = newEntries
+	}
+
+	for _, entry := range usage.Entries {
+		CompactUsage(entry, top)
+	}
+}
+
 func main() {
 	var (
 		err error
@@ -115,10 +143,16 @@ func main() {
 	var (
 		optPath   string
 		optOutput string
+		optTop    int
 	)
 	flag.StringVar(&optPath, "C", ".", "directory path")
 	flag.StringVar(&optOutput, "o", "duflame.html", "output file path")
+	flag.IntVar(&optTop, "t", 10, "top entries for each directory")
 	flag.Parse()
+
+	if optTop < 1 {
+		optTop = 1
+	}
 
 	tpl := rg.Must(
 		template.New("__main__").Funcs(template.FuncMap{
@@ -196,6 +230,8 @@ func main() {
 	})
 
 	waitGroup.Wait()
+
+	CompactUsage(usage, optTop)
 
 	err = tpl.Execute(f, map[string]any{
 		"Time":     time.Now().Format(time.DateTime),
