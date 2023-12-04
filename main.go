@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,6 +23,14 @@ var (
 	//go:embed template.gohtml
 	res embed.FS
 )
+
+func serializeAttributes(m map[string]string) template.HTMLAttr {
+	var items []string
+	for k, v := range m {
+		items = append(items, fmt.Sprintf("%s=%s", k, strconv.Quote(v)))
+	}
+	return template.HTMLAttr(strings.Join(items, " "))
+}
 
 type Usage struct {
 	Parent  *Usage   `json:"-"`
@@ -114,8 +123,9 @@ func CompactUsage(usage *Usage, top int) {
 		}
 
 		newEntries[top] = &Usage{
-			Name: "[Others]",
-			Size: othersSize,
+			Parent: usage,
+			Name:   "[Others]",
+			Size:   othersSize,
 		}
 
 		usage.Entries = newEntries
@@ -156,7 +166,22 @@ func main() {
 
 	tpl := rg.Must(
 		template.New("__main__").Funcs(template.FuncMap{
-			"calculateDataAttributes": func(usage *Usage) template.HTMLAttr {
+			"calculateItemAttributes": func(usage *Usage) template.HTMLAttr {
+				attrClass := "flamegraph-item"
+				attrStyle := "width: 100%;"
+				if usage.Parent != nil && usage.Parent.Size != 0 {
+					ratio := float64(usage.Size) / float64(usage.Parent.Size)
+					attrStyle = fmt.Sprintf(
+						"width: %.2f%%;",
+						ratio*100,
+					)
+				}
+				return serializeAttributes(map[string]string{
+					"class": attrClass,
+					"style": attrStyle,
+				})
+			},
+			"calculateItemTitleAttributes": func(usage *Usage) template.HTMLAttr {
 				var names []string
 
 				u := usage
@@ -165,37 +190,34 @@ func main() {
 					u = u.Parent
 				}
 
-				return template.HTMLAttr(
-					fmt.Sprintf(
-						`data-path=%s data-size="%d"`,
-						strconv.Quote(filepath.Join(names...)),
-						usage.Size,
-					),
-				)
-			},
-			"calculateStyle": func(usage *Usage) template.HTMLAttr {
-				if usage.Parent == nil || usage.Parent.Size == 0 {
-					return `style="width: 100%;"`
+				attrDataPath := filepath.Join(names...)
+				attrDataSize := strconv.FormatInt(usage.Size, 10)
+				attrClass := "flamegraph-item-title"
+
+				if usage.Parent == nil {
+					attrClass += " flamegraph-item-title-top"
+				} else if len(usage.Parent.Entries) > 0 &&
+					usage.Parent.Entries[len(usage.Parent.Entries)-1] == usage {
+					attrClass += " flamegraph-item-title-end"
 				}
-				ratio := float64(usage.Size) / float64(usage.Parent.Size)
-				return template.HTMLAttr(
-					fmt.Sprintf(
-						`style="width: %.2f%%;"`,
-						ratio*100,
-					),
-				)
-			},
-			"calculateTitleStyle": func(usage *Usage) template.HTMLAttr {
-				if usage.Parent == nil || usage.Parent.Size == 0 {
-					return `style="background-color: azure;"`
-				}
-				ratio := float64(usage.Size) / float64(usage.Parent.Size)
-				return template.HTMLAttr(
-					fmt.Sprintf(
-						`style="background-color: rgb(%d, 255, 255);"`,
+
+				attrStyle := "background-color: azure;"
+
+				if usage.Parent != nil && usage.Parent.Size != 0 {
+					ratio := float64(usage.Size) / float64(usage.Parent.Size)
+					attrStyle = fmt.Sprintf(
+						`background-color: rgb(%d, 255, 255);`,
 						int(100+(1.0-ratio)*156.0),
-					),
-				)
+					)
+				}
+
+				return serializeAttributes(map[string]string{
+					"style":       attrStyle,
+					"data-path":   attrDataPath,
+					"data-size":   attrDataSize,
+					"class":       attrClass,
+					"onmouseover": "onItemHover(this)",
+				})
 			},
 		}).Parse(string(
 			rg.Must(res.ReadFile("template.gohtml")),

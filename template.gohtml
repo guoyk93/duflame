@@ -218,7 +218,19 @@
             display: flex;
             justify-content: center;
             align-items: center;
-            border: inset 1px black;
+            border-left: inset 1px black;
+            border-bottom: inset 1px black;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        div.flamegraph-item-title-top {
+            border-top: inset 1px black;
+        }
+
+        div.flamegraph-item-title-end {
+            border-right: inset 1px black;
         }
 
         div.flamegraph-item-entries {
@@ -273,12 +285,8 @@
 </div>
 
 {{define "flamegraph-item"}}
-    <div class="flamegraph-item" {{calculateStyle . }}>
-        <div
-                onmouseover="onItemHover(this)"
-                class="flamegraph-item-title"
-                {{calculateDataAttributes .}}
-                {{calculateTitleStyle . }}>{{.Name}}</div>
+    <div {{calculateItemAttributes . }}>
+        <div {{calculateItemTitleAttributes . }}>{{.Name}}</div>
         <div class="flamegraph-item-entries">
             {{range .Entries}}
                 {{if .Size}}
