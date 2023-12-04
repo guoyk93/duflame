@@ -108,21 +108,21 @@ func CreateUsage(usage *Usage, opts CreateUsageOptions) {
 	return
 }
 
-func CompactUsage(usage *Usage, top int) {
+func CompactUsage(usage *Usage, maxEntries int, maxDepth int) {
 	sort.SliceStable(usage.Entries, func(i, j int) bool {
 		return usage.Entries[i].Size > usage.Entries[j].Size
 	})
 
-	if len(usage.Entries) > top {
-		newEntries := make([]*Usage, top+1)
-		copy(newEntries, usage.Entries[:top])
+	if len(usage.Entries) > maxEntries {
+		newEntries := make([]*Usage, maxEntries+1)
+		copy(newEntries, usage.Entries[:maxEntries])
 
 		var othersSize int64
-		for _, entry := range usage.Entries[top:] {
+		for _, entry := range usage.Entries[maxEntries:] {
 			othersSize += entry.Size
 		}
 
-		newEntries[top] = &Usage{
+		newEntries[maxEntries] = &Usage{
 			Parent: usage,
 			Name:   "[Others]",
 			Size:   othersSize,
@@ -131,8 +131,20 @@ func CompactUsage(usage *Usage, top int) {
 		usage.Entries = newEntries
 	}
 
+	{
+		var depth int
+		usage := usage
+		for usage.Parent != nil {
+			depth += 1
+			if depth > maxDepth {
+				return
+			}
+			usage = usage.Parent
+		}
+	}
+
 	for _, entry := range usage.Entries {
-		CompactUsage(entry, top)
+		CompactUsage(entry, maxEntries, maxDepth)
 	}
 }
 
@@ -151,17 +163,23 @@ func main() {
 	defer rg.Guard(&err)
 
 	var (
-		optPath   string
-		optOutput string
-		optTop    int
+		optPath       string
+		optOutput     string
+		optMaxEntries int
+		optMaxDepth   int
 	)
 	flag.StringVar(&optPath, "C", ".", "directory path")
 	flag.StringVar(&optOutput, "o", "duflame.html", "output file path")
-	flag.IntVar(&optTop, "t", 10, "top entries for each directory")
+	flag.IntVar(&optMaxEntries, "t", 10, "max entries for each directory")
+	flag.IntVar(&optMaxDepth, "d", 10, "max depth")
 	flag.Parse()
 
-	if optTop < 1 {
-		optTop = 1
+	if optMaxEntries < 1 {
+		optMaxEntries = 1
+	}
+
+	if optMaxDepth < 1 {
+		optMaxDepth = 1
 	}
 
 	tpl := rg.Must(
@@ -257,7 +275,7 @@ func main() {
 
 	waitGroup.Wait()
 
-	CompactUsage(usage, optTop)
+	CompactUsage(usage, optMaxEntries, optMaxDepth)
 
 	err = tpl.Execute(f, map[string]any{
 		"Time":     time.Now().Format(time.DateTime),
