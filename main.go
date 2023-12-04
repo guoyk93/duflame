@@ -184,10 +184,14 @@ func main() {
 			"calculateItemTitleAttributes": func(usage *Usage) template.HTMLAttr {
 				var names []string
 
-				u := usage
-				for u.Parent != nil {
-					names = append([]string{u.Name}, names...)
-					u = u.Parent
+				if usage.Parent == nil {
+					names = []string{usage.Name}
+				} else {
+					usage := usage
+					for usage.Parent != nil {
+						names = append([]string{usage.Name}, names...)
+						usage = usage.Parent
+					}
 				}
 
 				attrDataPath := filepath.Join(names...)
@@ -228,7 +232,7 @@ func main() {
 	defer f.Close()
 
 	usage := &Usage{
-		Name: "all",
+		Name: "[ROOT]",
 	}
 
 	// concurrency
