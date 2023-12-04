@@ -5,11 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"html/template"
-	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/guoyk93/rg"
@@ -28,35 +30,70 @@ type Usage struct {
 }
 
 func (u *Usage) AddSize(size int64) {
-	u.Size += size
+	atomic.AddInt64(&u.Size, size)
 	if u.Parent != nil {
 		u.Parent.AddSize(size)
 	}
 }
 
-func CreateUsage(usage *Usage, dir string) (err error) {
-	var entries []fs.DirEntry
-	if entries, err = os.ReadDir(dir); err != nil {
-		return
-	}
+type CreateUsageOptions struct {
+	Concurrency chan struct{}
+	Dir         string
+	OnError     func(err error, dir string)
+	WaitGroup   *sync.WaitGroup
+}
+
+func CreateUsage(usage *Usage, opts CreateUsageOptions) {
+	// concurrency control
+	<-opts.Concurrency
+	defer func() {
+		opts.Concurrency <- struct{}{}
+	}()
+	defer opts.WaitGroup.Done()
+
+	// error handling
+	var err error
+	defer func() {
+		if err == nil {
+			return
+		}
+		if opts.OnError != nil {
+			opts.OnError(err, opts.Dir)
+		}
+	}()
+	defer rg.Guard(&err)
+
+	entries := rg.Must(os.ReadDir(opts.Dir))
 
 	for _, entry := range entries {
 		if entry.IsDir() {
-			subUsage := &Usage{
-				Parent: usage,
-				Name:   entry.Name(),
-			}
-			if err = CreateUsage(subUsage, filepath.Join(dir, entry.Name())); err != nil {
-				return
-			}
-			usage.Entries = append(usage.Entries, subUsage)
-		} else {
-			var info fs.FileInfo
-			if info, err = entry.Info(); err != nil {
-				return
-			}
-			usage.AddSize(info.Size())
+			continue
 		}
+
+		info := rg.Must(entry.Info())
+
+		usage.AddSize(info.Size())
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		subUsage := &Usage{
+			Parent: usage,
+			Name:   entry.Name(),
+		}
+		usage.Entries = append(usage.Entries, subUsage)
+
+		opts.WaitGroup.Add(1)
+
+		go CreateUsage(subUsage, CreateUsageOptions{
+			Concurrency: opts.Concurrency,
+			WaitGroup:   opts.WaitGroup,
+			Dir:         filepath.Join(opts.Dir, entry.Name()),
+			OnError:     opts.OnError,
+		})
 	}
 	return
 }
@@ -138,7 +175,27 @@ func main() {
 		Name: "all",
 	}
 
-	rg.Must0(CreateUsage(usage, optPath))
+	// concurrency
+	numCPU := runtime.NumCPU()
+	concurrency := make(chan struct{}, numCPU)
+	for i := 0; i < numCPU; i++ {
+		concurrency <- struct{}{}
+	}
+
+	// wait group
+	waitGroup := &sync.WaitGroup{}
+	waitGroup.Add(1)
+
+	CreateUsage(usage, CreateUsageOptions{
+		Concurrency: concurrency,
+		WaitGroup:   waitGroup,
+		Dir:         optPath,
+		OnError: func(err error, dir string) {
+			log.Println("failed to calculate usage:", err, dir)
+		},
+	})
+
+	waitGroup.Wait()
 
 	err = tpl.Execute(f, map[string]any{
 		"Time":     time.Now().Format(time.DateTime),
