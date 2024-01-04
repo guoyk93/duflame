@@ -16,7 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/guoyk93/rg"
+	"github.com/yankeguo/rg"
 )
 
 var (
